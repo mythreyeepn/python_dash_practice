@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AG Grid Editable Example</title>
+    <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-theme-alpine.css">
+</head>
+<body>
+    <textarea id="dataInput" placeholder="Paste your Excel data here..." rows="5" style="width: 100%;"></textarea>
+    <button id="pasteButton">Paste Data</button>
+    <div id="myGrid" class="ag-theme-alpine" style="height: 400px; width: 100%; margin-top: 10px;"></div>
+
+    <script src="https://unpkg.com/ag-grid-community/dist/ag-grid-community.min.noStyle.js"></script>
+    <script>
+        // Define column definitions with editable cells
+        const columnDefs = [
+            { field: 'col1', headerName: 'Column 1', editable: true },
+            { field: 'col2', headerName: 'Column 2', editable: true },
+            { field: 'col3', headerName: 'Column 3', editable: true },
+            { field: 'col4', headerName: 'Column 4', editable: true },
+        ];
+
+        // Initialize row data
+        const rowData = [];
+
+        // Create the grid
+        const gridOptions = {
+            columnDefs: columnDefs,
+            rowData: rowData,
+            domLayout: 'autoHeight'
+        };
+
+        // Setup the grid after the page has loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const gridDiv = document.querySelector('#myGrid');
+            new agGrid.Grid(gridDiv, gridOptions);
+        });
+
+        // Handle paste functionality
+        document.getElementById('pasteButton').addEventListener('click', () => {
+            const clipboardData = document.getElementById('dataInput').value;
+            if (clipboardData) {
+                const newRows = clipboardData.split('\n').map(row => {
+                    const cells = row.split('\t');
+                    return {
+                        col1: cells[0] || '',
+                        col2: cells[1] || '',
+                        col3: cells[2] || '',
+                        col4: cells[3] || ''
+                    };
+                });
+                // Update the grid with new data
+                gridOptions.api.applyTransaction({ add: newRows });
+                document.getElementById('dataInput').value = ''; // Clear input
+            }
+        });
+    </script>
+</body>
+</html>
