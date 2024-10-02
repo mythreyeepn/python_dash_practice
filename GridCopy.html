@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AG Grid Paste Example</title>
+    <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-grid.css">
+    <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-theme-alpine.css">
+</head>
+<body>
+    <div id="myGrid" class="ag-theme-alpine" style="height: 400px; width: 100%; margin-top: 10px;"></div>
+
+    <script src="https://unpkg.com/ag-grid-enterprise/v31.2.0/dist/ag-grid-enterprise.min.js"></script>
+    <script>
+        // Set the AG Grid Enterprise License Key
+        agGrid.LicenseManager.setLicenseKey('your-enterprise-license-key-here'); // Replace with your actual license key
+
+        // Define the initial column definitions
+        let columnDefs = [
+            { field: 'ISIN', headerName: 'ISIN', editable: true },
+            { field: 'QTY', headerName: 'QTY', editable: true },
+            { field: 'Direction', headerName: 'Direction', editable: true },
+            { field: 'Size', headerName: 'Size', editable: true }
+        ];
+
+        // Initialize row data
+        let rowData = [{}, {}]; // Empty rows as placeholders
+
+        // Create the grid
+        const gridOptions = {
+            columnDefs: columnDefs,
+            rowData: rowData,
+            defaultColDef: {
+                flex: 1,
+                wrapText: true,
+                autoHeight: true,
+                editable: true
+            },
+            clipboardPasteOperation: (params) => {
+                // Get the pasted data
+                const pastedData = params.data;
+                
+                // Loop through the pasted data and add columns if necessary
+                for (let i = columnDefs.length; i < pastedData[0].length; i++) {
+                    columnDefs.push({
+                        field: 'col' + (i + 1),
+                        headerName: 'Column ' + (i + 1),
+                        editable: true
+                    });
+                }
+
+                // Apply the new columns
+                gridOptions.api.setColumnDefs(columnDefs);
+
+                return pastedData;
+            },
+            domLayout: 'autoHeight'
+        };
+
+        // Setup the grid after the page has loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            const gridDiv = document.querySelector('#myGrid');
+            new agGrid.Grid(gridDiv, gridOptions);
+        });
+    </script>
+</body>
+</html>
