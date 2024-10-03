@@ -3,64 +3,79 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AG Grid Paste Example</title>
+    <title>AG Grid Editable Example</title>
     <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-grid.css">
     <link rel="stylesheet" href="https://unpkg.com/ag-grid-community/styles/ag-theme-alpine.css">
 </head>
 <body>
+    <textarea id="dataInput" placeholder="Paste your Excel data here..." rows="5" style="width: 100%;"></textarea>
+    <button id="pasteButton">Paste Data</button>
     <div id="myGrid" class="ag-theme-alpine" style="height: 400px; width: 100%; margin-top: 10px;"></div>
 
-    <script src="https://unpkg.com/ag-grid-enterprise/v31.2.0/dist/ag-grid-enterprise.min.js"></script>
+    <script src="https://unpkg.com/ag-grid-community/dist/ag-grid-community.min.noStyle.js"></script>
     <script>
-        // Set the AG Grid Enterprise License Key
-        agGrid.LicenseManager.setLicenseKey('your-enterprise-license-key-here'); // Replace with your actual license key
-
-        // Define the initial column definitions
+        // Initial column definitions with editable cells
         let columnDefs = [
             { field: 'ISIN', headerName: 'ISIN', editable: true },
             { field: 'QTY', headerName: 'QTY', editable: true },
             { field: 'Direction', headerName: 'Direction', editable: true },
-            { field: 'Size', headerName: 'Size', editable: true }
+            { field: 'Size', headerName: 'Size', editable: true },
         ];
 
-        // Initialize row data
-        let rowData = [{}, {}]; // Empty rows as placeholders
+        // Initialize row data with one empty row
+        const rowData = [{}]; // Start with an empty row
 
         // Create the grid
         const gridOptions = {
             columnDefs: columnDefs,
             rowData: rowData,
-            defaultColDef: {
-                flex: 1,
-                wrapText: true,
-                autoHeight: true,
-                editable: true
-            },
-            clipboardPasteOperation: (params) => {
-                // Get the pasted data
-                const pastedData = params.data;
-                
-                // Loop through the pasted data and add columns if necessary
-                for (let i = columnDefs.length; i < pastedData[0].length; i++) {
-                    columnDefs.push({
-                        field: 'col' + (i + 1),
-                        headerName: 'Column ' + (i + 1),
-                        editable: true
-                    });
-                }
-
-                // Apply the new columns
-                gridOptions.api.setColumnDefs(columnDefs);
-
-                return pastedData;
-            },
-            domLayout: 'autoHeight'
+            domLayout: 'autoHeight',
+            onGridReady: () => {
+                // Set license key (replace with your actual key)
+                agGrid.LicenseManager.setLicenseKey("Using_this_AG Grid_Enterprise_key_(AG-039662 )_in_excess _of_the_licence_granted_is_not_permitted__Please_ report_misuse_to_( legal@ag-grid.com___For_help_with_changing_this_key_please_contact_( info@ag-grid.com )___(BARCLAYS PLC) is granted a ( Multiple Applications )_Developer_License_for_(49 )_Front-End_JavaScript_developers___All Front-End_JavaScript _developers_need_to be_licensed_in_addition_to_the_ones_working_with_AG_Grid_Enterprise__This_key_has _been_granted_ a_Deployment_License_Add-on_for_( 6)_Production_Environments__This_key_works_with_AG_Grid_Enterprise_versions_released_before_( 30 April 2024)_[v2]_MTCXNDQZMTYwMDAWMA==4a7b4c82d0135a74c832eae39fccf4ed");}
         };
 
         // Setup the grid after the page has loaded
         document.addEventListener('DOMContentLoaded', () => {
             const gridDiv = document.querySelector('#myGrid');
             new agGrid.Grid(gridDiv, gridOptions);
+        });
+
+        // Handle paste functionality
+        document.getElementById('pasteButton').addEventListener('click', () => {
+            const clipboardData = document.getElementById('dataInput').value;
+            if (clipboardData) {
+                const newRows = clipboardData.split('\n').map(row => {
+                    const cells = row.split('\t');
+                    const newRow = {
+                        ISIN: cells[0] || '',
+                        QTY: cells[1] || '',
+                        Direction: cells[2] || '',
+                        Size: cells[3] || ''
+                    };
+                    
+                    // Add any additional columns dynamically
+                    for (let i = 4; i < cells.length; i++) {
+                        newRow[`col${i + 1}`] = cells[i] || ''; // Create new column names (col5, col6, etc.)
+                    }
+                    
+                    return newRow;
+                });
+
+                // Update column definitions dynamically
+                const existingColumnCount = columnDefs.length;
+                const newColumnCount = Math.max(...newRows.map(row => Object.keys(row).length));
+                for (let i = existingColumnCount; i < newColumnCount; i++) {
+                    const newColDef = { field: `col${i + 1}`, headerName: `Column ${i + 1}`, editable: true };
+                    columnDefs.push(newColDef);
+                }
+
+                // Set updated column definitions to grid
+                gridOptions.api.setColumnDefs(columnDefs);
+                // Add new rows to the existing row data
+                gridOptions.api.applyTransaction({ add: newRows });
+                document.getElementById('dataInput').value = ''; // Clear input
+            }
         });
     </script>
 </body>

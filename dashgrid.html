@@ -12,49 +12,95 @@
     <button id="pasteButton">Paste Data</button>
     <div id="myGrid" class="ag-theme-alpine" style="height: 400px; width: 100%; margin-top: 10px;"></div>
 
-    <script src="https://unpkg.com/ag-grid-community/dist/ag-grid-community.min.noStyle.js"></script>
+    <script src="https://unpkg.com/ag-grid-community/dist/ag-grid-community.min.js"></script>
     <script>
-        // Define column definitions with editable cells
-        const columnDefs = [
-            { field: 'col1', headerName: 'Column 1', editable: true },
-            { field: 'col2', headerName: 'Column 2', editable: true },
-            { field: 'col3', headerName: 'Column 3', editable: true },
-            { field: 'col4', headerName: 'Column 4', editable: true },
-        ];
-
-        // Initialize row data
-        const rowData = [];
-
-        // Create the grid
-        const gridOptions = {
-            columnDefs: columnDefs,
-            rowData: rowData,
-            domLayout: 'autoHeight'
-        };
-
-        // Setup the grid after the page has loaded
+        // Ensure the script runs after the DOM is fully loaded
         document.addEventListener('DOMContentLoaded', () => {
+            // Define column definitions with editable cells
+            const columnDefs = [
+                { field: 'isin', headerName: 'ISIN', editable: true },
+                { field: 'qty', headerName: 'QTY', editable: true },
+                { field: 'direction', headerName: 'Direction', editable: true },
+                { field: 'size', headerName: 'Size', editable: true },
+            ];
+
+            // Initialize row data
+            const rowData = [];
+
+            // Create the grid
+            const gridOptions = {
+                columnDefs: columnDefs,
+                rowData: rowData,
+                domLayout: 'autoHeight',
+                onGridReady: (params) => {
+                    params.api.sizeColumnsToFit();
+                },
+            };
+
+            // Initialize the grid
             const gridDiv = document.querySelector('#myGrid');
             new agGrid.Grid(gridDiv, gridOptions);
-        });
 
-        // Handle paste functionality
-        document.getElementById('pasteButton').addEventListener('click', () => {
-            const clipboardData = document.getElementById('dataInput').value;
-            if (clipboardData) {
-                const newRows = clipboardData.split('\n').map(row => {
-                    const cells = row.split('\t');
-                    return {
-                        col1: cells[0] || '',
-                        col2: cells[1] || '',
-                        col3: cells[2] || '',
-                        col4: cells[3] || ''
-                    };
-                });
-                // Update the grid with new data
-                gridOptions.api.applyTransaction({ add: newRows });
-                document.getElementById('dataInput').value = ''; // Clear input
-            }
+            // Handle paste functionality
+            document.getElementById('pasteButton').addEventListener('click', () => {
+                const clipboardData = document.getElementById('dataInput').value;
+                if (clipboardData) {
+                    // Split by newlines for rows, and then by tabs or spaces for cells
+                    const rows = clipboardData.split(/\r?\n/).map(row => row.trim()).filter(row => row.length > 0);
+
+                    if (rows.length > 0) {
+                        // Extract the first row to determine column mapping
+                        const firstRow = rows[0].split(/\s+/);
+                        const columnMapping = {
+                            isin: null,
+                            qty: null,
+                            direction: null,
+                            size: null,
+                        };
+
+                        // Identify the column mapping from the first row
+                        firstRow.forEach((cell, index) => {
+                            console.log(`Checking cell: ${cell}, index: ${index}`); // Log each cell
+                            if ((cell.length === 16 || cell.length === 12 || cell.length === 9 || cell.length === 6) && !columnMapping.isin) {
+                                columnMapping.isin = index;
+                            } else if (cell.length === 3 && !columnMapping.qty) {
+                                columnMapping.qty = index;
+                            } else if (['BUY', 'SELL', 'BID', 'ASK', 'OFFER'].includes(cell.toUpperCase()) && !columnMapping.direction) {
+                                columnMapping.direction = index;
+                            } else if (['PRICE', 'SPREAD'].includes(cell.toUpperCase()) && !columnMapping.size) {
+                                columnMapping.size = index;
+                            }
+                        });
+
+                        console.log('Column Mapping:', columnMapping); // Log the column mapping
+
+                        // If the column mapping is incomplete, show an error
+                        if (columnMapping.isin === null || columnMapping.qty === null || columnMapping.direction === null || columnMapping.size === null) {
+                            alert('Error: Unable to identify column mapping from the first row. Please check the format.');
+                            return;
+                        }
+
+                        // Process the rows based on the identified column mapping
+                        const newRows = rows.map(row => {
+                            const cells = row.split(/\s+/);
+                            return {
+                                isin: cells[columnMapping.isin] || '',
+                                qty: cells[columnMapping.qty] || '',
+                                direction: cells[columnMapping.direction] || '',
+                                size: cells[columnMapping.size] || '',
+                            };
+                        });
+
+                        console.log('New Rows:', newRows);
+
+                        // Add new rows to the existing row data
+                        gridOptions.api.applyTransaction({ add: newRows });
+                        document.getElementById('dataInput').value = ''; // Clear input
+                    } else {
+                        alert('Error: No valid data found.');
+                    }
+                }
+            });
         });
     </script>
 </body>
