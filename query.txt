@@ -1,0 +1,157 @@
+SELECT
+    'bond123' AS bond_reference,          -- Hardcoded bond reference key (replace dynamically)
+    d1.derivative_col1, d1.derivative_col2
+    -- Add other columns needed from d1
+FROM bond123_derivative_1 d1
+UNION ALL
+SELECT
+    'bond123' AS bond_reference, 
+    d2.derivative_col1, d2.derivative_col2
+    -- Add other columns needed from d2
+FROM bond123_derivative_2 d2
+UNION ALL
+-- Repeat this process for all 20 derivative tables
+SELECT
+    'bond123' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2
+FROM bond123_derivative_20 d20;
+
+
+
+--------------------------------------------------------------
+
+
+-- Query for bond123
+SELECT
+    'bond123' AS bond_reference, 
+    d1.derivative_col1, d1.derivative_col2
+    -- Add other columns needed from d1
+FROM bond123_derivative_1 d1
+UNION ALL
+SELECT
+    'bond123' AS bond_reference, 
+    d2.derivative_col1, d2.derivative_col2
+    -- Add other columns needed from d2
+FROM bond123_derivative_2 d2
+UNION ALL
+-- Repeat for all 20 derivative tables of bond123
+SELECT
+    'bond123' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2
+FROM bond123_derivative_20 d20
+UNION ALL
+-- Query for bond456
+SELECT
+    'bond456' AS bond_reference, 
+    d1.derivative_col1, d1.derivative_col2
+    -- Add other columns needed from d1
+FROM bond456_derivative_1 d1
+UNION ALL
+-- Repeat for all 20 derivative tables of bond456
+SELECT
+    'bond456' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2
+FROM bond456_derivative_20 d20;
+
+-------------------------------------------------------------
+
+bonds = ['bond123', 'bond456', 'bond789']  # Replace with your bond keys
+query = ""
+
+for bond in bonds:
+    for i in range(1, 21):  # For each of the 20 derivative tables
+        query += f"SELECT '{bond}' AS bond_reference, derivative_col1, derivative_col2 FROM {bond}_derivative_{i} "
+        if bond != bonds[-1] or i != 20:
+            query += "UNION ALL "
+
+print(query)
+
+-------------------------------------------------------
+
+CREATE VIEW bond_derivatives_view AS
+
+-- Bond 1 derivatives
+SELECT 
+    'bond_1' AS bond_reference, 
+    d1.derivative_col1, d1.derivative_col2 
+FROM bond_1_derivative_1 d1
+UNION ALL
+SELECT 
+    'bond_1' AS bond_reference, 
+    d2.derivative_col1, d2.derivative_col2 
+FROM bond_1_derivative_2 d2
+-- Repeat for all 20 derivative tables of bond_1
+UNION ALL
+SELECT 
+    'bond_1' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2 
+FROM bond_1_derivative_20 d20
+
+-- Bond 2 derivatives
+UNION ALL
+SELECT 
+    'bond_2' AS bond_reference, 
+    d1.derivative_col1, d1.derivative_col2 
+FROM bond_2_derivative_1 d1
+UNION ALL
+SELECT 
+    'bond_2' AS bond_reference, 
+    d2.derivative_col1, d2.derivative_col2 
+FROM bond_2_derivative_2 d2
+-- Repeat for all 20 derivative tables of bond_2
+UNION ALL
+SELECT 
+    'bond_2' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2 
+FROM bond_2_derivative_20 d20
+
+-- Repeat this pattern for all 200 bonds
+
+-- Bond 200 derivatives
+UNION ALL
+SELECT 
+    'bond_200' AS bond_reference, 
+    d1.derivative_col1, d1.derivative_col2 
+FROM bond_200_derivative_1 d1
+UNION ALL
+SELECT 
+    'bond_200' AS bond_reference, 
+    d2.derivative_col1, d2.derivative_col2 
+FROM bond_200_derivative_2 d2
+-- Repeat for all 20 derivative tables of bond_200
+UNION ALL
+SELECT 
+    'bond_200' AS bond_reference, 
+    d20.derivative_col1, d20.derivative_col2 
+FROM bond_200_derivative_20 d20;
+
+
+
+SELECT * FROM bond_derivatives_view;
+-------------------------------------------------------
+
+CREATE TEMPORARY TABLE temp_bond_1_derivatives AS
+SELECT 'bond_1' AS bond_reference, derivative_col1, derivative_col2
+FROM bond_1_derivative_1
+UNION ALL
+SELECT 'bond_1' AS bond_reference, derivative_col1, derivative_col2
+FROM bond_1_derivative_2
+-- Repeat for all 20 derivative tables for bond_1;
+
+CREATE TEMPORARY TABLE temp_bond_2_derivatives AS
+SELECT 'bond_2' AS bond_reference, derivative_col1, derivative_col2
+FROM bond_2_derivative_1
+UNION ALL
+-- Repeat for all 20 derivative tables for bond_2;
+
+
+
+CREATE VIEW bond_derivatives_full_view AS
+SELECT * FROM temp_bond_1_derivatives
+UNION ALL
+SELECT * FROM temp_bond_2_derivatives;
+-- Repeat for all temporary bond derivative tables
+
+
+SELECT * FROM bond_derivatives_view;
+
