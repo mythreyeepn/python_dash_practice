@@ -35,5 +35,27 @@ def insert_data():
         print("SQL Server error:", e)
         return jsonify({'message': 'Internal Server Error'}), 500
 
+
+@app.route('/summary/<int:ptId>', methods=['GET'])
+def get_summary(ptId):
+    """Fetches summaryStrings for a given ptId."""
+    try:
+        with pyodbc.connect(connection_string) as conn:
+            with conn.cursor() as cursor:
+                query = "SELECT summary_string FROM your_table WHERE rfq_id = ?"
+                cursor.execute(query, (ptId,))
+                results = cursor.fetchall()
+
+        # If results exist, return them as a list
+        if results:
+            summaries = [row[0] for row in results]
+            return jsonify({'ptId': ptId, 'summaryStrings': summaries}), 200
+        else:
+            return jsonify({'message': 'No data found for given ptId'}), 404
+
+    except Exception as e:
+        print("SQL Server error:", e)
+        return jsonify({'message': 'Internal Server Error'}), 500
+
 if __name__ == '__main__':
     app.run(port=3000)
