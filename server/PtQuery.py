@@ -39,45 +39,21 @@ async def retry_kdb_query(query: str, retries: int = 2) -> dict:
                 raise Exception(f"Failed after {retries + 1} attempts for query: {query}")
             await asyncio.sleep(2)  # Wait before retrying
 
-# Function to insert combined OWIC and BWIC results into SQL
-async def insert_combined_result_to_sql(pt_id: str, owic_result: dict, bwic_result: dict):
-    """Insert combined OWIC and BWIC results into the database."""
-    # Replace this with your actual SQL insert logic
-    print(f"Inserting combined results for PT {pt_id} into SQL")
-    print(f"OWIC Result: {owic_result}")
-    print(f"BWIC Result: {bwic_result}")
-    
-    # After successful insert, remove the PT from the store
-    pt_store.pop(pt_id, None)
-    print(f"PT {pt_id} removed from store after successful insert.")
+async def upsert_pt_data_to_sql(pt_id: str, pt_name: str, pt_date: str, new_data: dict):
+    """Insert or update PT data array in SQL without source tags."""
+    print(f"Upserting PT {pt_id}")
 
-# Function to insert OWIC results into SQL (immediately after getting the response)
-async def insert_owic_result_to_sql(pt_id: str, owic_result: dict, pt_name: str, pt_date: str):
-    """Insert OWIC result into SQL immediately."""
-    # Replace this with your actual SQL insert logic
-    print(f"Inserting OWIC result for PT {pt_id} into SQL")
-    print(f"OWIC Result: {owic_result}")
-    
-    # Add PT info to the insert (you can replace with actual fields)
-    print(f"Inserting PT ID: {pt_id}, PT Name: {pt_name}, PT Date: {pt_date} along with OWIC data.")
-    
-    # Update pt_store with OWIC response
-    pt_store[pt_id]["owic_response"] = owic_result
-    pt_store[pt_id]["status"] = "owic_inserted"
+    existing_entry = await get_pt_by_id_from_sql(pt_id)
 
-# Function to update BWIC results into SQL once both OWIC and BWIC are available
-async def update_bwic_result_to_sql(pt_id: str, bwic_result: dict):
-    """Update BWIC result into SQL after both responses are available."""
-    pt_info = pt_store.get(pt_id)
-    
-    if pt_info and pt_info["owic_response"]:
-        # If OWIC response is available, we can proceed with the update
-        print(f"Updating BWIC result for PT {pt_id} into SQL")
-        print(f"BWIC Result: {bwic_result}")
-        
-        # Update SQL with combined OWIC and BWIC results (this is where you combine the data)
-        await insert_combined_result_to_sql(pt_id, pt_info["owic_response"], bwic_result)
-        pt_store[pt_id]["status"] = "completed"  # Mark PT as completed
+    if existing_entry:
+        print(f"Updating existing PT {pt_id}")
+        data_array = existing_entry["data"]ßß
+        data_array.append(new_data)
+        await update_pt_data_in_sql(pt_id, data_array)
+    else:
+        print(f"Inserting new PT {pt_id}")
+        await insert_pt_data_to_sql(pt_id, pt_name, pt_date, [new_data])
+
 
 # Function to process the PT, handle OWIC and BWIC queries, and manage the store
 async def process_pt(pt: Dict):
