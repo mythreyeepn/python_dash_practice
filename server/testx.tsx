@@ -1,36 +1,25 @@
-import React, { useState } from 'react'
-import {
-  AppBar, Toolbar, IconButton, Typography,
-  Drawer, List, ListItem, ListItemText
-} from '@mui/material'
-import MenuIcon from '@mui/icons-material/Menu'
+import React from 'react'
+import { useBondStore } from '../store/bondStore'
+import { FormControl, InputLabel, Select, MenuItem } from '@mui/material'
 
-const NavbarWithSidebar = () => {
-  const [open, setOpen] = useState(false)
+const TraderSelector = () => {
+  const { bonds, selectedTrader, setSelectedTrader } = useBondStore()
+  const traders = Array.from(new Set(bonds.map(b => b.trader)))
 
   return (
-    <>
-      <AppBar position="fixed">
-        <Toolbar>
-          <IconButton edge="start" color="inherit" onClick={() => setOpen(true)}>
-            <MenuIcon />
-          </IconButton>
-          <Typography variant="h6">Bond Universe</Typography>
-        </Toolbar>
-      </AppBar>
-
-      <Drawer anchor="left" open={open} onClose={() => setOpen(false)}>
-        <List>
-          <ListItem button>
-            <ListItemText primary="Dashboard" />
-          </ListItem>
-          <ListItem button>
-            <ListItemText primary="Reports" />
-          </ListItem>
-        </List>
-      </Drawer>
-    </>
+    <FormControl fullWidth margin="normal">
+      <InputLabel>Trader</InputLabel>
+      <Select
+        value={selectedTrader}
+        onChange={e => setSelectedTrader(e.target.value)}
+        label="Trader"
+      >
+        {traders.map(trader => (
+          <MenuItem key={trader} value={trader}>{trader}</MenuItem>
+        ))}
+      </Select>
+    </FormControl>
   )
 }
 
-export default NavbarWithSidebar
+export default TraderSelector
