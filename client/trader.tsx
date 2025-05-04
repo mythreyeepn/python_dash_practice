@@ -1,30 +1,25 @@
-import React from 'react';
-import { MenuItem, Select, InputLabel, FormControl } from '@mui/material';
-import { useBondStore } from './store';
+import React from 'react'
+import { useBondStore } from '../store/bondStore'
+import { FormControl, InputLabel, Select, MenuItem } from '@mui/material'
 
-const TraderDropdown = () => {
-  const { traders, selectedTrader, setSelectedTrader } = useBondStore();
+const TraderSelector = () => {
+  const { bonds, selectedTrader, setSelectedTrader } = useBondStore()
+  const traders = Array.from(new Set(bonds.map(b => b.trader)))
 
   return (
-    <FormControl fullWidth>
-      <InputLabel id="trader-select-label">Select Trader</InputLabel>
+    <FormControl fullWidth margin="normal">
+      <InputLabel>Trader</InputLabel>
       <Select
-        labelId="trader-select-label"
-        value={selectedTrader?.id || ''}
-        label="Select Trader"
-        onChange={(e) => {
-          const selected = traders.find((trader) => trader.id === e.target.value);
-          setSelectedTrader(selected);
-        }}
+        value={selectedTrader}
+        onChange={e => setSelectedTrader(e.target.value)}
+        label="Trader"
       >
-        {traders.map((trader) => (
-          <MenuItem key={trader.id} value={trader.id}>
-            {trader.name}
-          </MenuItem>
+        {traders.map(trader => (
+          <MenuItem key={trader} value={trader}>{trader}</MenuItem>
         ))}
       </Select>
     </FormControl>
-  );
-};
+  )
+}
 
-export default TraderDropdown;
+export default TraderSelector

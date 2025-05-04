@@ -1,0 +1,35 @@
+{
+    "traders": [
+      { "id": "trader1", "name": "Trader 1" },
+      { "id": "trader2", "name": "Trader 2" },
+      { "id": "trader3", "name": "Trader 3" }
+    ],
+    "bonds": [
+      {
+        "isin": "US1234567890",
+        "ticker": "AAPL",
+        "sector": "Technology",
+        "maturity": "2030-12-31",
+        "rating": "A",
+        "buySkew": 0.02,
+        "sellSkew": 0.03,
+        "dnt": 0.01,
+        "bondType": "Corporate",
+        "traderId": "trader1"
+      },
+      {
+        "isin": "US0987654321",
+        "ticker": "DIS",
+        "sector": "Entertainment",
+        "maturity": "2040-11-30",
+        "rating": "AA",
+        "buySkew": 0.01,
+        "sellSkew": 0.02,
+        "dnt": 0.005,
+        "bondType": "Government",
+        "traderId": "trader2"
+      }
+      // Add more mock bonds as needed
+    ]
+  }
+  
