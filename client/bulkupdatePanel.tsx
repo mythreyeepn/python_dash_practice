@@ -1,59 +1,46 @@
-// src/components/BulkUpdatePanel.tsx
-import React, { useState } from 'react';
-import { useBondStore } from '../store/bondStore';
 
-const BulkUpdatePanel = () => {
-  const { bulkUpdate, filteredBonds } = useBondStore();
-  const [buySkew, setBuySkew] = useState<number | string>('');
-  const [sellSkew, setSellSkew] = useState<number | string>('');
-  const [dnt, setDnt] = useState<number | string>('');
+const handleSkewChange = async (event) => {
+  const { data, colDef, newValue, oldValue } = event;
+  if (newValue === oldValue) return;
 
-  const handleBulkUpdate = () => {
-    const patch: Partial<Bond> = {};
-    if (buySkew) patch.buySkew = Number(buySkew);
-    if (sellSkew) patch.sellSkew = Number(sellSkew);
-    if (dnt) patch.dnt = Number(dnt);
-
-    bulkUpdate(patch, (bond) => filteredBonds.includes(bond));
-  };
-
-  return (
-    <div className="mb-4">
-      <div>
-        <label htmlFor="buySkew">Buy Skew:</label>
-        <input
-          id="buySkew"
-          type="number"
-          value={buySkew}
-          onChange={(e) => setBuySkew(e.target.value)}
-          className="ml-2 p-1 border"
-        />
-      </div>
-      <div>
-        <label htmlFor="sellSkew">Sell Skew:</label>
-        <input
-          id="sellSkew"
-          type="number"
-          value={sellSkew}
-          onChange={(e) => setSellSkew(e.target.value)}
-          className="ml-2 p-1 border"
-        />
-      </div>
-      <div>
-        <label htmlFor="dnt">DNT:</label>
-        <input
-          id="dnt"
-          type="number"
-          value={dnt}
-          onChange={(e) => setDnt(e.target.value)}
-          className="ml-2 p-1 border"
-        />
-      </div>
-      <button onClick={handleBulkUpdate} className="mt-2 p-2 bg-blue-500 text-white">
-        Update Selected
-      </button>
-    </div>
-  );
+  await axios.post("/skews/update", {
+    isin: data.isin,
+    column: colDef.field,
+    new_value: parseFloat(newValue),
+    user_id: currentUser.id,
+    client_last_seen: data.last_updated_at
+  });
 };
 
-export default BulkUpdatePanel;
+const socket = new WebSocket("ws://localhost:8000/ws");
+
+socket.onmessage = (msg) => {
+  const data = JSON.parse(msg.data);
+  if (data.event === "skew_updated") {
+    gridRef.api.applyTransaction({ update: [{ isin: data.isin, [data.column]: data.new_value }] });
+  }
+  if (data.event === "start_edit") {
+    showEditorTooltip(data.isin, data.column, data.username);
+  }
+  if (data.event === "stop_edit") {
+    hideEditorTooltip(data.isin, data.column);
+  }
+};
+
+function showEditorTooltip(isin, column, username) {
+  const cell = document.querySelector(`[row-isin='${isin}'] [col-id='${column}']`);
+  if (cell) {
+    const tooltip = document.createElement("div");
+    tooltip.className = "cell-tooltip";
+    tooltip.innerText = `${username} is editing...`;
+    cell.appendChild(tooltip);
+  }
+}
+
+function hideEditorTooltip(isin, column) {
+  const cell = document.querySelector(`[row-isin='${isin}'] [col-id='${column}']`);
+  if (cell) {
+    const tooltip = cell.querySelector(".cell-tooltip");
+    if (tooltip) tooltip.remove();
+  }
+}
