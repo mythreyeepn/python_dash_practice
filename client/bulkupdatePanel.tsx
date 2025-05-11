@@ -1,46 +1,71 @@
+let socket = null;
+let reconnectInterval = 3000; // 3 seconds
+const traderChannel = "trader-skews"; // use dynamic trader ID if needed
 
-const handleSkewChange = async (event) => {
-  const { data, colDef, newValue, oldValue } = event;
-  if (newValue === oldValue) return;
+function connectWebSocket() {
+  socket = new WebSocket(`ws://localhost:8000/ws/${traderChannel}`);
 
-  await axios.post("/skews/update", {
-    isin: data.isin,
-    column: colDef.field,
-    new_value: parseFloat(newValue),
+  socket.onopen = () => {
+    console.log("[WS] Connected to trader-skews");
+  };
+
+  socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    switch (data.event) {
+      case "skew_updated":
+        console.log("[WS] Skew updated:", data);
+        gridRef.api.applyTransaction({
+          update: [{ isin: data.isin, [data.column]: data.new_value }]
+        });
+        break;
+
+      case "start_edit":
+        showEditorTooltip(data.isin, data.column, data.username);
+        break;
+
+      case "stop_edit":
+        hideEditorTooltip(data.isin, data.column);
+        break;
+
+      default:
+        console.log("[WS] Unknown event:", data);
+    }
+  };
+
+  socket.onclose = (e) => {
+    console.warn(`[WS] Disconnected. Attempting to reconnect in ${reconnectInterval / 1000}s`, e.reason);
+    setTimeout(connectWebSocket, reconnectInterval);
+  };
+
+  socket.onerror = (err) => {
+    console.error("[WS] Error:", err.message);
+    socket.close();
+  };
+}
+
+// Call this once (e.g., on app load or after selecting trader)
+connectWebSocket();
+
+
+onCellEditingStarted: (event) => {
+  socket.send(JSON.stringify({
+    event: "start_edit",
+    isin: event.data.isin,
+    column: event.colDef.field,
     user_id: currentUser.id,
-    client_last_seen: data.last_updated_at
-  });
-};
+    username: currentUser.name
+  }));
+},
 
-const socket = new WebSocket("ws://localhost:8000/ws");
 
-socket.onmessage = (msg) => {
-  const data = JSON.parse(msg.data);
-  if (data.event === "skew_updated") {
-    gridRef.api.applyTransaction({ update: [{ isin: data.isin, [data.column]: data.new_value }] });
-  }
-  if (data.event === "start_edit") {
-    showEditorTooltip(data.isin, data.column, data.username);
-  }
-  if (data.event === "stop_edit") {
-    hideEditorTooltip(data.isin, data.column);
-  }
-};
-
-function showEditorTooltip(isin, column, username) {
-  const cell = document.querySelector(`[row-isin='${isin}'] [col-id='${column}']`);
-  if (cell) {
-    const tooltip = document.createElement("div");
-    tooltip.className = "cell-tooltip";
-    tooltip.innerText = `${username} is editing...`;
-    cell.appendChild(tooltip);
-  }
+onCellEditingStopped: (event) => {
+  socket.send(JSON.stringify({
+    event: "stop_edit",
+    isin: event.data.isin,
+    column: event.colDef.field,
+    user_id: currentUser.id
+  }));
 }
 
-function hideEditorTooltip(isin, column) {
-  const cell = document.querySelector(`[row-isin='${isin}'] [col-id='${column}']`);
-  if (cell) {
-    const tooltip = cell.querySelector(".cell-tooltip");
-    if (tooltip) tooltip.remove();
-  }
-}
+
