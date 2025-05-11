@@ -101,3 +101,18 @@ async def update_skew(req: SkewUpdateRequest):
         "old_value": old_value,
         "new_value": req.new_value
     }
+
+
+@app.websocket("/ws/{channel}")
+async def websocket_endpoint(websocket: WebSocket, channel: str):
+    await websocket.accept()
+    pubsub_manager.register(channel, websocket)
+
+    try:
+        while True:
+            # Optional: read presence messages from client (e.g. start_edit)
+            message = await websocket.receive_json()
+            await pubsub_manager.publish(channel, message)  # echo to others
+    except WebSocketDisconnect:
+        pubsub_manager.unregister(channel, websocket)
+
