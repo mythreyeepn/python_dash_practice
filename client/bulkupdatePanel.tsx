@@ -1,39 +1,37 @@
-const handleBulkUpdate = async () => {
-  const updates = [];
-  const clientLastSeenMap = {};
+const response = await axios.post(...);
 
-  gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
-    const { isin, last_updated_at } = node.data;
+// Only this client gets the conflict info
+response.data.updated.forEach((item) => {
+  const rowNode = gridRef.current.api.getRowNode(item.isin);
+  if (!rowNode) return;
 
-    if (buySkew) {
-      updates.push({
-        isin,
-        column: "buy_skew",
-        new_value: Number(buySkew)
-      });
-    }
+  const fullRow = { ...rowNode.data };
+  fullRow[item.column] = item.new_value;
 
-    if (sellSkew) {
-      updates.push({
-        isin,
-        column: "sell_skew",
-        new_value: Number(sellSkew)
-      });
-    }
+  // ✅ Red border if conflict
+  if (item.conflict) {
+    fullRow.conflictColumns = {
+      ...(fullRow.conflictColumns || {}),
+      [item.column]: true
+    };
+    // Optional auto-clear
+    setTimeout(() => {
+      const r = gridRef.current.api.getRowNode(item.isin)?.data;
+      if (!r) return;
+      const updated = { ...r };
+      updated.conflictColumns[item.column] = false;
+      gridRef.current.api.applyTransaction({ update: [updated] });
+    }, 45000);
+  }
 
-    if (last_updated_at) {
-      clientLastSeenMap[isin] = last_updated_at;
-    }
-  });
+  gridRef.current.api.applyTransaction({ update: [fullRow] });
+});
 
-  if (updates.length === 0) return;
 
-  await axios.post("/skews_bulk_update", {
-    updates,
-    user_id: currentUser.id,
-    client_last_seen_map: clientLastSeenMap
-  });
+.cell-red-border {
+  border: 2px solid red !important;
+}
 
-  setBuySkew('');
-  setSellSkew('');
-};
+'cell-red-border': (params) => {
+  return params.data.conflictColumns?.[params.colDef.field] === true;
+}
