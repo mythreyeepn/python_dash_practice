@@ -1,118 +1,99 @@
-from fastapi import FastAPI, HTTPException
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
+from typing import List, Dict, Optional
 import uuid
-import pyodbc
 
-from pubsub_manager import InMemoryPubSubManager
+router = APIRouter()
 
-app = FastAPI()
-conn = pyodbc.connect("your_connection_string")
-pubsub_manager = InMemoryPubSubManager()
-
-class SkewUpdateRequest(BaseModel):
+class SkewUpdateItem(BaseModel):
     isin: str
-    column: str  # "buy_skew" or "sell_skew"
+    column: str
     new_value: float
-    user_id: int
-    client_last_seen: datetime = None  # optional for first-time edit
 
-@app.post("/skews_update")
-async def update_skew(req: SkewUpdateRequest):
-    if req.column not in ["buy_skew", "sell_skew"]:
-        raise HTTPException(status_code=400, detail="Invalid column")
+class SkewBulkUpdateRequest(BaseModel):
+    updates: List[SkewUpdateItem]
+    user_id: str
+    client_last_seen_map: Optional[Dict[str, datetime]] = None
 
+@router.post("/skews_bulk_update")
+async def bulk_update_skews(req: SkewBulkUpdateRequest):
     cursor = conn.cursor()
     now = datetime.utcnow()
+    responses = []
 
-    # Step 1: Try to fetch existing skew value
-    cursor.execute(
-        f"SELECT {req.column}, last_updated_at FROM skew_skews WHERE isin = ?",
-        (req.isin,)
-    )
-    result = cursor.fetchone()
+    for update in req.updates:
+        if update.column not in ["buy_skew", "sell_skew"]:
+            continue  # skip invalid columns
 
-    if result:
-        old_value, last_updated_at = result
+        # Check bond exists
+        cursor.execute("SELECT 1 FROM skew_bonds WHERE isin = ?", (update.isin,))
+        if not cursor.fetchone():
+            continue
 
-        # Step 2: Safe Hybrid Conflict Detection
-        conflict = False
-        if last_updated_at and req.client_last_seen:
-            if last_updated_at > req.client_last_seen:
-                conflict = True
-
-        # Step 3: Update existing skew
+        # Fetch existing skew and timestamp
         cursor.execute(
-            f"""
-            UPDATE skew_skews
-            SET {req.column} = ?, last_updated_by = ?, last_updated_at = ?
-            WHERE isin = ?
-            """,
-            (req.new_value, req.user_id, now, req.isin)
+            f"SELECT {update.column}, last_updated_at FROM skew_skews WHERE isin = ?",
+            (update.isin,)
+        )
+        result = cursor.fetchone()
+
+        if result:
+            old_value, last_updated_at = result
+            last_seen = req.client_last_seen_map.get(update.isin) if req.client_last_seen_map else None
+
+            conflict = last_updated_at and last_seen and last_updated_at > last_seen
+
+            # Update
+            cursor.execute(
+                f"UPDATE skew_skews SET {update.column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+                (update.new_value, req.user_id, now, update.isin)
+            )
+        else:
+            old_value = None
+            last_updated_at = None
+            conflict = False
+
+            buy_skew = update.new_value if update.column == "buy_skew" else None
+            sell_skew = update.new_value if update.column == "sell_skew" else None
+
+            cursor.execute(
+                "INSERT INTO skew_skews (isin, buy_skew, sell_skew, last_updated_by, last_updated_at) VALUES (?, ?, ?, ?, ?)",
+                (update.isin, buy_skew, sell_skew, req.user_id, now)
+            )
+
+        # Log change
+        group_id = str(uuid.uuid4())
+        cursor.execute(
+            "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (update.isin, update.column, old_value, update.new_value, req.user_id, now, group_id)
         )
 
-    else:
-        # Step 4: Insert new skew row
-        buy_skew = req.new_value if req.column == "buy_skew" else None
-        sell_skew = req.new_value if req.column == "sell_skew" else None
-
-        cursor.execute(
-            """
-            INSERT INTO skew_skews (isin, buy_skew, sell_skew, last_updated_by, last_updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (req.isin, buy_skew, sell_skew, req.user_id, now)
+        # WebSocket broadcast
+        await pubsub_manager.publish(
+            channel="trader-skews",
+            message={
+                "event": "skew_updated",
+                "isin": update.isin,
+                "column": update.column,
+                "new_value": update.new_value,
+                "user_id": req.user_id,
+                "timestamp": now.isoformat(),
+                "conflict": conflict,
+                "highlight": {
+                    "color": "green",
+                    "expires_at": (now.isoformat())
+                }
+            }
         )
 
-        old_value = None  # No previous value
-        conflict = False  # First-time insert cannot conflict
-
-    # Step 5: Log the change
-    group_id = str(uuid.uuid4())
-    cursor.execute(
-        """
-        INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (req.isin, req.column, old_value, req.new_value, req.user_id, now, group_id)
-    )
+        responses.append({
+            "isin": update.isin,
+            "column": update.column,
+            "new_value": update.new_value,
+            "conflict": conflict
+        })
 
     conn.commit()
-
-    # Step 6: WebSocket broadcast
-    await pubsub_manager.publish(
-        channel="trader-skews",
-        message={
-            "event": "skew_updated",
-            "isin": req.isin,
-            "column": req.column,
-            "new_value": req.new_value,
-            "user_id": req.user_id,
-            "timestamp": now.isoformat(),
-            "conflict": conflict
-        }
-    )
-
-    return {
-        "status": "success",
-        "conflict": conflict,
-        "isin": req.isin,
-        "column": req.column,
-        "old_value": old_value,
-        "new_value": req.new_value
-    }
-
-
-@app.websocket("/ws/{channel}")
-async def websocket_endpoint(websocket: WebSocket, channel: str):
-    await websocket.accept()
-    pubsub_manager.register(channel, websocket)
-
-    try:
-        while True:
-            # Optional: read presence messages from client (e.g. start_edit)
-            message = await websocket.receive_json()
-            await pubsub_manager.publish(channel, message)  # echo to others
-    except WebSocketDisconnect:
-        pubsub_manager.unregister(channel, websocket)
-
+    return {"status": "bulk_success", "updated": responses}
