@@ -2,98 +2,102 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List
 import uuid
 
 router = APIRouter()
 
-class SkewUpdateItem(BaseModel):
-    isin: str
-    column: str
-    new_value: float
-
-class SkewBulkUpdateRequest(BaseModel):
-    updates: List[SkewUpdateItem]
+class UndoRequest(BaseModel):
     user_id: str
-    client_last_seen_map: Optional[Dict[str, datetime]] = None
 
-@router.post("/skews_bulk_update")
-async def bulk_update_skews(req: SkewBulkUpdateRequest):
+@router.post("/skews_undo")
+async def undo_skews(req: UndoRequest):
     cursor = conn.cursor()
     now = datetime.utcnow()
-    responses = []
 
-    for update in req.updates:
-        if update.column not in ["buy_skew", "sell_skew"]:
-            continue  # skip invalid columns
+    # Step 1: Get most recent group_id for this user
+    cursor.execute(
+        "SELECT TOP 1 group_id FROM skew_change_log WHERE user_id = ? ORDER BY timestamp DESC",
+        (req.user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No actions to undo.")
 
-        # Check bond exists
-        cursor.execute("SELECT 1 FROM skew_bonds WHERE isin = ?", (update.isin,))
-        if not cursor.fetchone():
-            continue
+    group_id = row[0]
 
-        # Fetch existing skew and timestamp
+    # Step 2: Get all changes in that group
+    cursor.execute(
+        "SELECT isin, column_name, old_value, new_value FROM skew_change_log WHERE group_id = ?",
+        (group_id,)
+    )
+    changes = cursor.fetchall()
+
+    reverted = []
+    conflicts = []
+
+    for isin, column, old_value, new_value in changes:
+        # Step 3: Check if this user’s value is still latest
         cursor.execute(
-            f"SELECT {update.column}, last_updated_at FROM skew_skews WHERE isin = ?",
-            (update.isin,)
+            f"SELECT {column}, last_updated_by FROM skew_skews WHERE isin = ?",
+            (isin,)
         )
         result = cursor.fetchone()
+        if not result:
+            continue
 
-        if result:
-            old_value, last_updated_at = result
-            last_seen = req.client_last_seen_map.get(update.isin) if req.client_last_seen_map else None
+        current_value, last_updated_by = result
 
-            conflict = last_updated_at and last_seen and last_updated_at > last_seen
+        if str(current_value) != str(new_value) or last_updated_by != req.user_id:
+            # Someone else has changed this since → skip
+            conflicts.append({
+                "isin": isin,
+                "column": column,
+                "latest_value": current_value,
+                "reason": "Value has been updated by another user after your change."
+            })
+            continue
 
-            # Update
-            cursor.execute(
-                f"UPDATE skew_skews SET {update.column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
-                (update.new_value, req.user_id, now, update.isin)
-            )
-        else:
-            old_value = None
-            last_updated_at = None
-            conflict = False
-
-            buy_skew = update.new_value if update.column == "buy_skew" else None
-            sell_skew = update.new_value if update.column == "sell_skew" else None
-
-            cursor.execute(
-                "INSERT INTO skew_skews (isin, buy_skew, sell_skew, last_updated_by, last_updated_at) VALUES (?, ?, ?, ?, ?)",
-                (update.isin, buy_skew, sell_skew, req.user_id, now)
-            )
-
-        # Log change
-        group_id = str(uuid.uuid4())
+        # Step 4: Apply the undo
         cursor.execute(
-            "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (update.isin, update.column, old_value, update.new_value, req.user_id, now, group_id)
+            f"UPDATE skew_skews SET {column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+            (old_value, req.user_id, now, isin)
         )
 
-        # WebSocket broadcast
+        # Step 5: Log the undo
+        new_group_id = str(uuid.uuid4())
+        cursor.execute(
+            "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (isin, column, new_value, old_value, req.user_id, now, new_group_id)
+        )
+
+        # Step 6: Broadcast undo as orange highlight
         await pubsub_manager.publish(
             channel="trader-skews",
             message={
                 "event": "skew_updated",
-                "isin": update.isin,
-                "column": update.column,
-                "new_value": update.new_value,
+                "isin": isin,
+                "column": column,
+                "new_value": old_value,
                 "user_id": req.user_id,
                 "timestamp": now.isoformat(),
-                "conflict": conflict,
+                "conflict": False,
                 "highlight": {
-                    "color": "green",
-                    "expires_at": (now.isoformat())
+                    "color": "orange",
+                    "expires_at": now.isoformat()
                 }
             }
         )
 
-        responses.append({
-            "isin": update.isin,
-            "column": update.column,
-            "new_value": update.new_value,
-            "conflict": conflict
+        reverted.append({
+            "isin": isin,
+            "column": column,
+            "new_value": old_value
         })
 
     conn.commit()
-    return {"status": "bulk_success", "updated": responses}
+    return {
+        "status": "partial_undo" if conflicts else "undo_success",
+        "reverted": reverted,
+        "conflicts": conflicts
+    }

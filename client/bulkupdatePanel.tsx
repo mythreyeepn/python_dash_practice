@@ -1,37 +1,33 @@
-const response = await axios.post(...);
+const handleUndo = async () => {
+  try {
+    const response = await axios.post("/skews_undo", {
+      user_id: currentUser.id
+    });
 
-// Only this client gets the conflict info
-response.data.updated.forEach((item) => {
-  const rowNode = gridRef.current.api.getRowNode(item.isin);
-  if (!rowNode) return;
+    const { reverted, conflicts } = response.data;
 
-  const fullRow = { ...rowNode.data };
-  fullRow[item.column] = item.new_value;
-
-  // ✅ Red border if conflict
-  if (item.conflict) {
-    fullRow.conflictColumns = {
-      ...(fullRow.conflictColumns || {}),
-      [item.column]: true
-    };
-    // Optional auto-clear
-    setTimeout(() => {
-      const r = gridRef.current.api.getRowNode(item.isin)?.data;
-      if (!r) return;
-      const updated = { ...r };
-      updated.conflictColumns[item.column] = false;
-      gridRef.current.api.applyTransaction({ update: [updated] });
-    }, 45000);
+    if (conflicts.length > 0) {
+      conflicts.forEach((item) => {
+        console.warn(
+          `Undo skipped for ${item.isin} (${item.column}): ${item.reason}`
+        );
+        // Optionally mark conflict visually
+        const rowNode = gridRef.current.api.getRowNode(item.isin);
+        if (rowNode) {
+          const updated = { ...rowNode.data };
+          updated.conflictColumns = {
+            ...(updated.conflictColumns || {}),
+            [item.column]: true
+          };
+          gridRef.current.api.applyTransaction({ update: [updated] });
+        }
+      });
+      alert("Undo applied partially. Some values were skipped due to conflict.");
+    } else {
+      console.log("Undo successful:", reverted);
+    }
+  } catch (err) {
+    console.error("Undo failed:", err.response?.data?.detail || err.message);
+    alert("Nothing left to undo or an error occurred.");
   }
-
-  gridRef.current.api.applyTransaction({ update: [fullRow] });
-});
-
-
-.cell-red-border {
-  border: 2px solid red !important;
-}
-
-'cell-red-border': (params) => {
-  return params.data.conflictColumns?.[params.colDef.field] === true;
-}
+};
