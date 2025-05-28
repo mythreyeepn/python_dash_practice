@@ -73,9 +73,24 @@ async def redo_skews(req: RedoRequest):
     conn.commit()
     return {"status": "redo_success", "restored_group": group_id}
 
-# CREATE TABLE redo_stack (
-#     user_id VARCHAR(50),
-#     group_id VARCHAR(50),
-#     timestamp DATETIME DEFAULT GETDATE(),
-#     PRIMARY KEY (user_id, group_id)
-# );
+CREATE TABLE undo_stack (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL,
+    isin VARCHAR(20) NOT NULL,
+    column_name VARCHAR(50) NOT NULL,
+    old_value VARCHAR(75),
+    new_value VARCHAR(75),
+    timestamp DATETIME DEFAULT GETDATE(),
+    group_id UNIQUEIDENTIFIER
+);
+
+CREATE TABLE redo_stack (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL,
+    isin VARCHAR(20) NOT NULL,
+    column_name VARCHAR(50) NOT NULL,
+    old_value VARCHAR(75),
+    new_value VARCHAR(75),
+    timestamp DATETIME DEFAULT GETDATE(),
+    group_id UNIQUEIDENTIFIER
+);
