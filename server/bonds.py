@@ -120,3 +120,14 @@ async def websocket_endpoint(websocket: WebSocket):
 # Start the FastAPI app (you can change this to uvicorn if needed)
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+#     CREATE TABLE skew_skews (
+#     isin VARCHAR(20) PRIMARY KEY,
+#     buy_skew FLOAT,
+#     sell_skew FLOAT,
+#     last_updated_by VARCHAR(50),
+#     last_updated_at DATETIME,
+#     CONSTRAINT fk_skew_bonds FOREIGN KEY (isin) REFERENCES skew_bonds(isin)
+# );
+
