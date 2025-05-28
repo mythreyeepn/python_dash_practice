@@ -73,24 +73,11 @@ async def redo_skews(req: RedoRequest):
     conn.commit()
     return {"status": "redo_success", "restored_group": group_id}
 
-CREATE TABLE undo_stack (
-    id INT IDENTITY(1,1) PRIMARY KEY,
-    user_id VARCHAR(50) NOT NULL,
-    isin VARCHAR(20) NOT NULL,
-    column_name VARCHAR(50) NOT NULL,
-    old_value VARCHAR(75),
-    new_value VARCHAR(75),
-    timestamp DATETIME DEFAULT GETDATE(),
-    group_id UNIQUEIDENTIFIER
-);
-
-CREATE TABLE redo_stack (
-    id INT IDENTITY(1,1) PRIMARY KEY,
-    user_id VARCHAR(50) NOT NULL,
-    isin VARCHAR(20) NOT NULL,
-    column_name VARCHAR(50) NOT NULL,
-    old_value VARCHAR(75),
-    new_value VARCHAR(75),
-    timestamp DATETIME DEFAULT GETDATE(),
-    group_id UNIQUEIDENTIFIER
-);
+const DropdownWithArrowRenderer = ({ value }) => {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span>{value || ''}</span>
+      <span style={{ fontSize: '0.75rem', marginLeft: 4 }}>▼</span>
+    </div>
+  );
+};
