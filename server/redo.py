@@ -1,83 +1,151 @@
-
-from fastapi import APIRouter, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import List, Dict, Optional
 from datetime import datetime
+import pyodbc
 import uuid
 
-router = APIRouter()
+app = FastAPI()
+connection_string = "your_connection_string_here"
 
-class RedoRequest(BaseModel):
+class SkewUpdate(BaseModel):
+    isin: str
+    column: str
+    new_value: str
+
+class SkewBulkUpdateRequest(BaseModel):
+    user_id: str
+    updates: List[SkewUpdate]
+    client_last_seen_map: Optional[Dict[str, datetime]] = None
+
+class UndoRedoRequest(BaseModel):
     user_id: str
 
-@router.post("/skews_redo")
-async def redo_skews(req: RedoRequest):
-    conn = pyodbc.connect(connection_string)
-    cursor = conn.cursor()
-    now = datetime.utcnow()
+@app.post("/skews_bulk_update")
+async def bulk_update_skews(req: SkewBulkUpdateRequest):
+    with pyodbc.connect(connection_string) as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow()
+        responses = []
+        group_id = str(uuid.uuid4())
 
-    # Step 1: Get the most recent group_id from redo_stack
-    cursor.execute(
-        "SELECT TOP 1 group_id FROM redo_stack WHERE user_id = ? ORDER BY timestamp DESC",
-        (req.user_id,)
-    )
-    row = cursor.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="No actions to redo.")
+        for update in req.updates:
+            if update.column not in ["skew", "crb_mode"]:
+                continue
 
-    group_id = row[0]
+            cursor.execute("SELECT 1 FROM skew_bonds WHERE isin = ?", (update.isin,))
+            if not cursor.fetchone():
+                continue
 
-    # Step 2: Remove it from the redo stack
-    cursor.execute(
-        "DELETE FROM redo_stack WHERE user_id = ? AND group_id = ?",
-        (req.user_id, group_id)
-    )
+            cursor.execute(f"SELECT {update.column}, last_updated_at FROM skew_skews WHERE isin = ?", (update.isin,))
+            result = cursor.fetchone()
 
-    # Step 3: Get the changes to redo
-    cursor.execute(
-        "SELECT isin, column_name, new_value, old_value FROM skew_change_log WHERE group_id = ?",
-        (group_id,)
-    )
-    changes = cursor.fetchall()
+            if result:
+                old_value, last_updated_at = result
+                last_seen = req.client_last_seen_map.get(update.isin) if req.client_last_seen_map else None
+                conflict = last_updated_at and last_seen and last_updated_at > last_seen
 
-    new_group_id = str(uuid.uuid4())
-    for isin, column, new_value, old_value in changes:
-        # Apply redo
+                cursor.execute(
+                    f"UPDATE skew_skews SET {update.column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+                    (update.new_value, req.user_id, now, update.isin)
+                )
+            else:
+                old_value = None
+                conflict = False
+                skew = update.new_value if update.column == "skew" else None
+                crb_mode = update.new_value if update.column == "crb_mode" else None
+
+                cursor.execute(
+                    "INSERT INTO skew_skews (isin, skew, crb_mode, last_updated_by, last_updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (update.isin, skew, crb_mode, req.user_id, now)
+                )
+
+            cursor.execute(
+                "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (update.isin, update.column, old_value, update.new_value, req.user_id, now, group_id)
+            )
+            cursor.execute(
+                "INSERT INTO undo_stack (user_id, isin, column_name, old_value, new_value, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (req.user_id, update.isin, update.column, old_value, update.new_value, now, group_id)
+            )
+            responses.append({
+                "isin": update.isin,
+                "column": update.column,
+                "new_value": update.new_value,
+                "conflict": conflict
+            })
+
+        conn.commit()
+        return {"status": "bulk_success", "updated": responses}
+
+@app.post("/skews_undo")
+async def undo_skews(req: UndoRedoRequest):
+    with pyodbc.connect(connection_string) as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow()
+
         cursor.execute(
-            f"UPDATE skew_skews SET {column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
-            (new_value, req.user_id, now, isin)
+            "SELECT TOP 1 group_id FROM undo_stack WHERE user_id = ? ORDER BY timestamp DESC",
+            (req.user_id,)
         )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No undo actions available.")
 
-        # Log the redo
+        group_id = row[0]
+
         cursor.execute(
-            "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (isin, column, old_value, new_value, req.user_id, now, new_group_id)
+            "SELECT isin, column_name, old_value, new_value FROM undo_stack WHERE group_id = ?",
+            (group_id,)
         )
+        changes = cursor.fetchall()
 
-        # Publish via socket
-        await pubsub_manager.publish(
-            channel="trader-skews",
-            message={
-                "event": "skew_updated",
-                "isin": isin,
-                "column": column,
-                "new_value": new_value,
-                "user_id": req.user_id,
-                "timestamp": now.isoformat() + "Z",
-                "highlight": {
-                    "color": "green",
-                    "expires_at": now.isoformat() + "Z"
-                }
-            }
+        for isin, column, old_value, new_value in changes:
+            cursor.execute(
+                f"UPDATE skew_skews SET {column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+                (old_value, req.user_id, now, isin)
+            )
+            cursor.execute(
+                "INSERT INTO redo_stack (user_id, isin, column_name, old_value, new_value, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (req.user_id, isin, column, new_value, old_value, now, group_id)
+            )
+
+        cursor.execute("DELETE FROM undo_stack WHERE group_id = ?", (group_id,))
+        conn.commit()
+        return {"status": "undo_success"}
+
+@app.post("/skews_redo")
+async def redo_skews(req: UndoRedoRequest):
+    with pyodbc.connect(connection_string) as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow()
+
+        cursor.execute(
+            "SELECT TOP 1 group_id FROM redo_stack WHERE user_id = ? ORDER BY timestamp DESC",
+            (req.user_id,)
         )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No redo actions available.")
 
-    conn.commit()
-    return {"status": "redo_success", "restored_group": group_id}
+        group_id = row[0]
 
-const DropdownWithArrowRenderer = ({ value }) => {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <span>{value || ''}</span>
-      <span style={{ fontSize: '0.75rem', marginLeft: 4 }}>▼</span>
-    </div>
-  );
-};
+        cursor.execute(
+            "SELECT isin, column_name, old_value, new_value FROM redo_stack WHERE group_id = ?",
+            (group_id,)
+        )
+        changes = cursor.fetchall()
+
+        for isin, column, old_value, new_value in changes:
+            cursor.execute(
+                f"UPDATE skew_skews SET {column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+                (new_value, req.user_id, now, isin)
+            )
+            cursor.execute(
+                "INSERT INTO undo_stack (user_id, isin, column_name, old_value, new_value, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (req.user_id, isin, column, old_value, new_value, now, group_id)
+            )
+
+        cursor.execute("DELETE FROM redo_stack WHERE group_id = ?", (group_id,))
+        conn.commit()
+        return {"status": "redo_success"}
