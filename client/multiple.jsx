@@ -1,210 +1,150 @@
-// App.jsx
-import React, { useState } from 'react';
-import './App.css';
+import React, { useState, useEffect, useRef } from "react";
+import { Backdrop, CircularProgress } from "@mui/material";
+import axios from "axios";
+import AGGridComponent from "./AGGridComponent"; // Assume your grid component
 
-const App = () => {
-  const [selectedRow, setSelectedRow] = useState(null);
+const BulkUpdateComponent = ({ selectedUser }) => {
+  const [bulk_skew, setBulkSkew] = useState("Select");
+  const [bulk_crb_mode, setBulkCrbMode] = useState("Select");
+  const [loading, setLoading] = useState(false);
+  const gridRef = useRef(null);
 
-  const handleRowClick = (index) => {
-    setSelectedRow(index === selectedRow ? null : index);
+  useEffect(() => {
+    const traderChannel = "trader-skews";
+    const socket = new WebSocket(`ws://localhost:8001/ws/${traderChannel}`);
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      const color = data.user_id === selectedUser ? "green" : "blue";
+      const expiresAt = Date.now() + 15000;
+
+      switch (data.event) {
+        case "skew_updated":
+          if (gridRef.current) {
+            const rowNode = gridRef.current.api.getRowNode(data.isin);
+            if (!rowNode) break;
+
+            const fullRow = { ...rowNode.data };
+            fullRow[data.column] = data.new_value;
+            fullRow["last_updated_by"] = data.user_id;
+            fullRow["last_updated_at"] = data.timestamp;
+
+            fullRow.highlightStatus = {
+              ...(fullRow.highlightStatus || {}),
+              [data.column]: {
+                color: data.highlight?.color || color,
+                expiresAt,
+              },
+            };
+
+            gridRef.current.api.applyTransaction({
+              update: [fullRow],
+            });
+          }
+          break;
+
+        default:
+          console.log("[WS] Unknown event:", data);
+      }
+    };
+
+    return () => socket.close();
+  }, [selectedUser]);
+
+  const handleBulkUpdate = async () => {
+    const updates = [];
+    const clientLastSeenMap = {};
+
+    gridRef.current.api.forEachNodeAfterFilterAndSort((node) => {
+      const { isin, last_updated_at } = node.data;
+      if (bulk_skew !== "Select") {
+        updates.push({ isin, column: "skew", new_value: bulk_skew });
+      }
+      if (bulk_crb_mode !== "Select") {
+        updates.push({ isin, column: "crb_mode", new_value: bulk_crb_mode });
+      }
+      if (last_updated_at) {
+        clientLastSeenMap[isin] = last_updated_at;
+      }
+    });
+
+    if (updates.length === 0) return;
+
+    setLoading(true);
+    try {
+      const response = await axios.post("http://localhost:8001/skews_bulk_update", {
+        updates,
+        user_id: selectedUser,
+        client_last_seen_map: clientLastSeenMap,
+      });
+
+      response.data.updated.forEach((item) => {
+        const rowNode = gridRef.current.api.getRowNode(item.isin);
+        if (!rowNode) return;
+
+        const fullRow = { ...rowNode.data };
+        fullRow[item.column] = item.new_value;
+
+        if (item.conflict) {
+          fullRow.conflictColumns = {
+            ...(fullRow.conflictColumns || {}),
+            [item.column]: true,
+          };
+
+          setTimeout(() => {
+            const r = gridRef.current.api.getRowNode(item.isin)?.data;
+            if (!r) return;
+            const updated = { ...r };
+            updated.conflictColumns[item.column] = false;
+            gridRef.current.api.applyTransaction({ update: [updated] });
+          }, 45000);
+        }
+
+        gridRef.current.api.applyTransaction({ update: [fullRow] });
+      });
+    } catch (err) {
+      console.error("Bulk update error:", err);
+    } finally {
+      setLoading(false);
+      setBulkSkew("Select");
+      setBulkCrbMode("Select");
+    }
   };
 
-  const renderSmallTable = (title) => (
-    <div className="small-table">
-      <div className="row">{title} - Row 1</div>
-      <div className="row">{title} - Row 2</div>
-    </div>
-  );
-
-//   valueFormatter: (params) => {
-//     const date = new Date(params.value);
-//     if (!params.value) return '';
-//     const pad = (n) => String(n).padStart(2, '0');
-//     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}  ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-//   }
-
   return (
-    <div className="app-container">
-      <nav className="navbar">
-        <div className="navbar-left">My App</div>
-        <div className="navbar-right">
-          <label className="switch">
-            <input type="checkbox" />
-            <span className="slider round"></span>
-          </label>
-          <label className="switch">
-            <input type="checkbox" />
-            <span className="slider round"></span>
-          </label>
-          <label className="switch">
-            <input type="checkbox" />
-            <span className="slider round"></span>
-          </label>
-        </div>
-      </nav>
-      <div className="main-layout">
-        <div className="left-content">
-          <div className="main-table">
-            {[...Array(20)].map((_, i) => (
-              <div
-                key={i}
-                className={`row ${selectedRow === i ? 'selected' : ''}`}
-                onClick={() => handleRowClick(i)}
-              >
-                Row {i + 1}
-              </div>
-            ))}
-          </div>
-          {selectedRow !== null && (
-            <div className="child-table">
-              <div>Child Table for Row {selectedRow + 1}</div>
-              <div className="row">Child Row A</div>
-              <div className="row">Child Row B</div>
-            </div>
-          )}
-        </div>
-        {selectedRow !== null && (
-          <div className="side-tables">
-            {renderSmallTable('Small Table 1')}
-            {renderSmallTable('Small Table 2')}
-            {renderSmallTable('Small Table 3')}
-            {renderSmallTable('Small Table 4')}
-          </div>
-        )}
+    <>
+      <Backdrop open={loading} sx={{ zIndex: 2000 }}>
+        <CircularProgress color="inherit" />
+      </Backdrop>
+
+      <AGGridComponent gridRef={gridRef} />
+
+      {/* Bulk controls */}
+      <div style={{ marginTop: 10 }}>
+        <select value={bulk_skew} onChange={(e) => setBulkSkew(e.target.value)}>
+          <option value="Select">Select Skew</option>
+          <option value="Buy">Buy</option>
+          <option value="Strong Buy">Strong Buy</option>
+          <option value="Sell">Sell</option>
+          <option value="Strong Sell">Strong Sell</option>
+          <option value="Neutral">Neutral</option>
+        </select>
+
+        <select value={bulk_crb_mode} onChange={(e) => setBulkCrbMode(e.target.value)}>
+          <option value="Select">Select CRB Mode</option>
+          <option value="Do Not Trade">Do Not Trade</option>
+          <option value="Buy Only">Buy Only</option>
+          <option value="Sell Only">Sell Only</option>
+          <option value="Risk Reduce Only">Risk Reduce Only</option>
+          <option value="Risk Reduce Buy Only">Risk Reduce Buy Only</option>
+          <option value="Risk Reduce Sell Only">Risk Reduce Sell Only</option>
+          <option value="Market Make">Market Make</option>
+        </select>
+
+        <button onClick={handleBulkUpdate}>Apply Bulk Update</button>
       </div>
-    </div>
+    </>
   );
 };
 
-export default App; // App.css
-
-body {
-  margin: 0;
-  font-family: sans-serif;
-}
-
-.app-container {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
-
-.navbar {
-  background-color: #242120;
-  color: white;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 1rem;
-  height: 60px;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 1000;
-}
-
-.navbar-left {
-  font-size: 1.2rem;
-}
-
-.navbar-right {
-  display: flex;
-  gap: 10px;
-}
-
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 50px;
-  height: 24px;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: #ccc;
-  transition: 0.4s;
-  border-radius: 24px;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background-color: white;
-  transition: 0.4s;
-  border-radius: 50%;
-}
-
-input:checked + .slider {
-  background-color: #2196F3;
-}
-
-input:checked + .slider:before {
-  transform: translateX(26px);
-}
-
-.main-layout {
-  display: flex;
-  flex: 1;
-  padding-top: 60px; /* height of navbar */
-  overflow: hidden;
-}
-
-.left-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1rem;
-}
-
-.side-tables {
-  width: 250px;
-  background: #f1f1f1;
-  overflow-y: auto;
-  padding: 1rem;
-  border-left: 1px solid #ccc;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.main-table, .child-table {
-  background: #fff;
-  border: 1px solid #ddd;
-  margin-bottom: 1rem;
-}
-
-.row {
-  padding: 10px;
-  border-bottom: 1px solid #eee;
-  cursor: pointer;
-}
-
-.row:hover {
-  background: #f9f9f9;
-}
-
-.selected {
-  background: #d9eaff;
-}
-
-.small-table {
-  background: white;
-  border: 1px solid #ccc;
-  padding: 0.5rem;
-  min-height: 80px;
-}
+export default BulkUpdateComponent;
