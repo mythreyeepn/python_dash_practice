@@ -1,86 +1,83 @@
+@app.post("/skews_bulk_update")
+async def bulk_update_skews(req: SkewBulkUpdateRequest):
+    with pyodbc.connect(connection_string) as conn:
+        cursor = conn.cursor()
+        now = datetime.utcnow()
+        responses = []
+        bulk_socket_updates = []
+        group_id = str(uuid.uuid4())
 
-from fastapi import APIRouter, BackgroundTasks
-from pydantic import BaseModel
-from datetime import datetime
-import uuid
+        for update in req.updates:
+            if update.column not in ["skew", "crb_mode"]:
+                continue  # skip invalid columns
 
-router = APIRouter()
+            # Check bond exists
+            cursor.execute("SELECT 1 FROM skew_bonds WHERE isin = ?", (update.isin,))
+            if not cursor.fetchone():
+                continue
 
-class BulkSkewUpdate(BaseModel):
-    user_id: str
-    updates: list  # each item should have { isin, column, new_value }
+            # Fetch existing skew and timestamp
+            cursor.execute(
+                f"SELECT {update.column}, last_updated_at FROM skew_skews WHERE isin = ?",
+                (update.isin,)
+            )
+            result = cursor.fetchone()
 
-@router.post("/skews_bulk_update")
-async def bulk_update_skews(req: BulkSkewUpdate, background_tasks: BackgroundTasks):
-    now = datetime.utcnow()
-    group_id = str(uuid.uuid4())
+            if result:
+                old_value, last_updated_at = result
+                last_seen = req.client_last_seen_map.get(update.isin) if req.client_last_seen_map else None
+                conflict = last_updated_at and last_seen and last_updated_at > last_seen
 
-    # ✅ Commit changes immediately
-    conn = pyodbc.connect(connection_string)
-    cursor = conn.cursor()
-    for update in req.updates:
-        if update["column"] not in ["buy_skew", "sell_skew"]:
-            continue
-        cursor.execute("SELECT 1 FROM skew_bonds WHERE isin = ?", (update["isin"],))
-        if not cursor.fetchone():
-            continue
+                # Update
+                cursor.execute(
+                    f"UPDATE skew_skews SET {update.column} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
+                    (update.new_value, req.user_id, now, update.isin)
+                )
+            else:
+                old_value = None
+                last_updated_at = None
+                conflict = False
 
-        cursor.execute(
-            f"UPDATE skew_skews SET {update['column']} = ?, last_updated_by = ?, last_updated_at = ? WHERE isin = ?",
-            (update["new_value"], req.user_id, now, update["isin"])
-        )
+                skew = update.new_value if update.column == "skew" else None
+                crb_mode = update.new_value if update.column == "crb_mode" else None
 
-        cursor.execute(
-            "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (update["isin"], update["column"], None, update["new_value"], req.user_id, now, group_id)
-        )
-    conn.commit()
+                cursor.execute(
+                    "INSERT INTO skew_skews (isin, skew, crb_mode, last_updated_by, last_updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (update.isin, skew, crb_mode, req.user_id, now)
+                )
 
-    # ✅ Offload WebSocket broadcast to background
-    background_tasks.add_task(broadcast_bulk_updates, req.updates, req.user_id, now)
+            # Log change
+            cursor.execute(
+                "INSERT INTO skew_change_log (isin, column_name, old_value, new_value, user_id, timestamp, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (update.isin, update.column, old_value, update.new_value, req.user_id, now, group_id)
+            )
 
-    return {"status": "accepted", "message": f"{len(req.updates)} rows queued for update."}
+            # Prepare for bulk socket message
+            bulk_socket_updates.append({
+                "isin": update.isin,
+                "column": update.column,
+                "new_value": update.new_value,
+                "user_id": req.user_id,
+                "timestamp": now.isoformat(),
+                "conflict": conflict
+            })
 
-async def broadcast_bulk_updates(updates, user_id, timestamp):
-    message = {
-        "event": "bulk_skew_updated",
-        "updates": []
-    }
-    for update in updates:
-        message["updates"].append({
-            "isin": update["isin"],
-            "column": update["column"],
-            "new_value": update["new_value"],
-            "user_id": user_id,
-            "timestamp": timestamp.isoformat() + "Z",
-            "highlight": {
-                "color": "green",
-                "expires_at": timestamp.isoformat() + "Z"
+            responses.append({
+                "isin": update.isin,
+                "column": update.column,
+                "new_value": update.new_value,
+                "conflict": conflict
+            })
+
+        conn.commit()
+
+        # Send one bulk WebSocket update
+        await pubsub_manager.publish(
+            channel="trader-skews",
+            message={
+                "event": "bulk_skew_updated",
+                "updates": bulk_socket_updates
             }
-        })
+        )
 
-    await pubsub_manager.publish(channel="trader-skews", message=message)
-
-
-
-# socket.onmessage = (event) => {
-#   const data = JSON.parse(event.data);
-#   switch (data.event) {
-#     case "bulk_skew_updated":
-#       data.updates.forEach(update => {
-#         const rowNode = gridRef.current.api.getRowNode(update.isin);
-#         if (!rowNode) return;
-#         const fullRow = { ...rowNode.data };
-#         fullRow[update.column] = update.new_value;
-#         fullRow.highlightStatus = {
-#           ...(fullRow.highlightStatus || {}),
-#           [update.column]: {
-#             color: update.highlight?.color || "green",
-#             expiresAt: Date.now() + 45000
-#           }
-#         };
-#         gridRef.current.api.applyTransaction({ update: [fullRow] });
-#       });
-#       break;
-#   }
-# };
+        return {"status": "bulk_success", "updated": responses}
