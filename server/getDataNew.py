@@ -1,45 +1,33 @@
-import pytz
-from datetime import datetime
-import qpython.qconnection as qconn
-from collections import deque
+from qpython import qconnection
+import pandas as pd
 
-# Define EST timezone
-EST = pytz.timezone('US/Eastern')
+def send_df_to_kdb(df: pd.DataFrame):
+    # Connect to KDB
+    q = qconnection.QConnection(host='localhost', port=5000)
+    q.open()
 
-# In-memory storage for SDR trades
-sdr_trades = deque(maxlen=1000)  # Stores latest trades (adjust size as needed)
-seen_trade_ids = set()  # Track seen trades to avoid duplicates
-latest_timestamp = None  # Track the last trade timestamp
+    # Send DataFrame to KDB as variable `df`
+    q.sendSync("df: ([] isin:`symbol$(); skew:`symbol$(); updatetime:`timestamp$(); user:`symbol$())")  # Ensure `df` is initialized
+    q.sendSync("df: enlist each (" + ",".join([
+        "`" + str(row['isin']),
+        "`" + str(row['skew']),
+        str(row['updatetime']),
+        "`" + str(row['user'])
+    ]) + ")" for _, row in df.iterrows())
 
-# Function to fetch new trades from kdb
-def fetch_new_trades():
-    global latest_timestamp
-    with qconn.QConnection(host='your_kdb_host', port=your_kdb_port, username='user', password='pass') as q:
-        query = f"select from trades where executionTimestamp >= {latest_timestamp}" if latest_timestamp else "select from trades"
-        result = q(query)
-        if result:
-            new_trades = [trade for trade in result if trade['disseminationId'] not in seen_trade_ids]
-            for trade in new_trades:
-                seen_trade_ids.add(trade['disseminationId'])
-            
-            if new_trades:
-                latest_timestamp = max(trade['executionTimestamp'] for trade in new_trades)  # Update last timestamp
+    # Define and execute the Q logic
+    q_code = r"""
+    skewMap: `StrongSell`Sell`Buy`StrongBuy!(0.5 -0.5 0 1);
+    runIdNow: .J `$[string .z.z except "."; "T"];
 
-                # Convert executionTimestamp from UTC to EST before sending to UI
-                for trade in new_trades:
-                    # Assuming executionTimestamp is in UTC
-                    execution_time_utc = trade['executionTimestamp']
-                    
-                    # If the timestamp is a string, first convert to datetime object
-                    if isinstance(execution_time_utc, str):
-                        execution_time_utc = datetime.strptime(execution_time_utc, "%Y-%m-%dT%H:%M:%S.%fZ")  # Example UTC format
-                    
-                    # Convert from UTC to EST
-                    execution_time_est = execution_time_utc.astimezone(EST)
+    res: select time: .z.t, sym: isin, symType: isin, updateTime: .z.t, priority: 0n, category: `, 
+              buySkew: skewMap[skew], sellSkew: skewMap[skew], runId: runIdNow from df;
 
-                    # Update the trade with the converted EST time for UI display
-                    trade['executionTimestamp'] = execution_time_est.strftime("%Y-%m-%d %H:%M:%S")
+    res: update buySkew: 0f + buySkew, sellSkew: 0f + sellSkew from res;
 
-                sdr_trades.extend(new_trades)
-            return new_trades
-        return []
+    panodb: `$":kdb-panoproxy-credit-nyk-ui-7015";
+    (panodb) (`.utils.sendTPUpdateWithoutFlush; `smadUS.tp; `factorSkewConfig; res)
+    """
+
+    q.sync(q_code)
+    q.close()
