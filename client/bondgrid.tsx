@@ -1,161 +1,39 @@
-// App.jsx
+# NodeJS base image
+FROM nexus-amazon-dev-docker-registry.barclays.intranet/barclays-int-ibdsp/ubi8-nodejs_18:latest
 
-import React, { useEffect, useState } from 'react';
-import { CssBaseline, Container, Box, FormControl, InputLabel, Select, MenuItem, Button, TextField, Grid } from '@mui/material';
-import { useBondStore } from './store/bondStore';
-import { AgGridReact } from 'ag-grid-react';
-import 'ag-grid-community/styles/ag-grid.css';
-import 'ag-grid-community/styles/ag-theme-alpine.css';
-import NavbarSidebar from './components/NavbarSidebar';  // Import NavbarSidebar
+# Replace the following with your team's email address
+# MAINTAINER your-email@barclays.com
+LABEL maintainer="your-email@barclays.com"
+LABEL prisma_email_alert="your-email@barclays.com"
 
-const App = () => {
-  const { setBonds, setTraders, bonds, traders } = useBondStore();
+# Set working directory
+WORKDIR /usr/app
 
-  const [selectedTrader, setSelectedTrader] = useState(traders[0]?.id || '');
-  const [buySkew, setBuySkew] = useState(0);
-  const [sellSkew, setSellSkew] = useState(0);
-  const [dnt, setDnt] = useState(0);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+# Copy package files first (for better caching)
+COPY ["package.json", "package-lock.json", "./"]
 
-  // Fetch mock data and set it to store on page load
-  useEffect(() => {
-    const fetchMockData = async () => {
-      const response = await fetch('/mockData.json');
-      const data = await response.json();
-      setTraders(data.traders);
-      setBonds(data.bonds);
-    };
+# Install app dependencies
+RUN echo "Application install: start." && npm install && npm ci
 
-    fetchMockData();
-  }, [setBonds, setTraders]);
+# Add the source files
+COPY . .
 
-  // Filter bonds based on selected trader
-  const filteredBonds = bonds.filter(bond => bond.traderId === selectedTrader);
+# NOTE: We do NOT run `npm run build` here because React needs REACT_APP_THEME injected at runtime
 
-  // Columns for AG Grid
-  const columns = [
-    { headerName: 'Sector', field: 'sector' },
-    { headerName: 'Maturity', field: 'maturity' },
-    { headerName: 'Rating', field: 'rating' },
-    { headerName: 'Ticker', field: 'ticker' },
-    { headerName: 'ISIN', field: 'isin' },
-    {
-      headerName: 'Buy Skew',
-      field: 'buySkew',
-      editable: true,
-      cellEditor: 'agTextCellEditor',
-    },
-    {
-      headerName: 'Sell Skew',
-      field: 'sellSkew',
-      editable: true,
-      cellEditor: 'agTextCellEditor',
-    },
-    {
-      headerName: 'DNT',
-      field: 'dnt',
-      editable: true,
-      cellEditor: 'agTextCellEditor',
-    },
-  ];
+# Optional: Prepare for server logic (safe check for future)
+WORKDIR /usr/app/build/server
+RUN echo "Server install: start." && \
+  if [ -f package.json ]; then \
+    npm ci --production; \
+  else \
+    echo "No server package.json found, skipping install."; \
+  fi
 
-  // Handle changes for Buy/Sell Skew and DNT
-  const handleBulkUpdate = () => {
-    const updatedBonds = filteredBonds.map(bond => ({
-      ...bond,
-      buySkew,
-      sellSkew,
-      dnt,
-    }));
-    setBonds([
-      ...bonds.filter(bond => bond.traderId !== selectedTrader),
-      ...updatedBonds,
-    ]);
-  };
+# Expose app port
+EXPOSE 3002
 
-  // AG Grid options
-  const gridOptions = {
-    defaultColDef: {
-      sortable: true,
-      filter: true,
-      resizable: true,
-    },
-    rowData: filteredBonds,
-  };
+# Switch to non-root user
+USER 5000
 
-  return (
-    <div>
-      <CssBaseline />
-
-      {/* Navbar and Sidebar Component */}
-      <NavbarSidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-
-      {/* Main Content */}
-      <Box sx={{ flexGrow: 1, padding: '20px' }}>
-        <Container maxWidth="lg" sx={{ marginTop: '20px' }}>
-          {/* Trader Dropdown */}
-          <FormControl fullWidth sx={{ marginBottom: '20px' }}>
-            <InputLabel>Trader</InputLabel>
-            <Select
-              value={selectedTrader}
-              label="Trader"
-              onChange={(e) => setSelectedTrader(e.target.value)}
-            >
-              {traders.map(trader => (
-                <MenuItem key={trader.id} value={trader.id}>
-                  {trader.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          {/* Bulk Update Section */}
-          <Grid container spacing={2} sx={{ marginBottom: '20px' }}>
-            <Grid item xs={4}>
-              <TextField
-                label="Buy Skew"
-                type="number"
-                fullWidth
-                value={buySkew}
-                onChange={(e) => setBuySkew(parseFloat(e.target.value))}
-              />
-            </Grid>
-            <Grid item xs={4}>
-              <TextField
-                label="Sell Skew"
-                type="number"
-                fullWidth
-                value={sellSkew}
-                onChange={(e) => setSellSkew(parseFloat(e.target.value))}
-              />
-            </Grid>
-            <Grid item xs={4}>
-              <TextField
-                label="DNT"
-                type="number"
-                fullWidth
-                value={dnt}
-                onChange={(e) => setDnt(parseFloat(e.target.value))}
-              />
-            </Grid>
-          </Grid>
-          <Button variant="contained" color="primary" onClick={handleBulkUpdate}>
-            Bulk Update
-          </Button>
-
-          {/* AG Grid */}
-          <div className="ag-theme-alpine" style={{ height: '600px', marginTop: '20px' }}>
-            <AgGridReact
-              columnDefs={columns}
-              gridOptions={gridOptions}
-              defaultColDef={{ sortable: true, filter: true, editable: true }}
-              domLayout="autoHeight"
-            />
-          </div>
-        </Container>
-      </Box>
-    </div>
-  );
-};
-
-export default App;
+# Build React app at runtime (after env vars like REACT_APP_THEME are injected)
+ENTRYPOINT [ "sh", "-c", "echo \"Building React app with theme=$REACT_APP_THEME\" && cd /usr/app && npm run build && node server" ]
